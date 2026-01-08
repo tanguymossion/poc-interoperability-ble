@@ -2,37 +2,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:jni/jni.dart';
 import 'package:my_package_ffi/ble.dart';
+import 'package:my_package_ffi/src/ios/ble_scanner_ios.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 void main() {
   runApp(const MyApp());
-}
-
-/// Classe pour stocker les infos d'un appareil BLE découvert.
-class BleDeviceInfo {
-  final String address;
-  final String name;
-  final int rssi;
-  final DateTime discoveredAt;
-
-  BleDeviceInfo({
-    required this.address,
-    required this.name,
-    required this.rssi,
-    DateTime? discoveredAt,
-  }) : discoveredAt = discoveredAt ?? DateTime.now();
-
-  bool get hasName => name.isNotEmpty;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BleDeviceInfo && address == other.address;
-
-  @override
-  int get hashCode => address.hashCode;
 }
 
 class MyApp extends StatelessWidget {
@@ -41,14 +16,13 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'BLE Scanner Demo',
+      title: 'BLE Scan',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF00B4D8),
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
-        fontFamily: 'SF Pro Display',
       ),
       home: const BleScannerPage(),
     );
@@ -63,95 +37,80 @@ class BleScannerPage extends StatefulWidget {
 }
 
 class _BleScannerPageState extends State<BleScannerPage> {
-  final Map<String, BleDeviceInfo> _devicesMap = {};
-  List<BleDeviceInfo> get _devices {
+  // Scanner cross-platform (Android + iOS)
+  BleScanner? _scanner;
+  StreamSubscription<BleDevice>? _scanSubscription;
+
+  final Map<String, BleDevice> _devicesMap = {};
+  List<BleDevice> get _devices {
     final list = _devicesMap.values.toList();
     list.sort((a, b) => b.rssi.compareTo(a.rssi));
     return list;
   }
 
   bool _isScanning = false;
-  String _statusMessage = 'Prêt à scanner';
+  String _statusMessage = 'Initialisation...';
   String? _errorMessage;
-
-  // Variables pour le vrai scan BLE via JNI
-  BluetoothAdapter? _adapter;
-  BluetoothAdapter$LeScanCallback? _scanCallback;
-
-  bool _permissionsGranted = false;
 
   @override
   void initState() {
     super.initState();
-    _requestPermissionsAndInit();
+    _initScanner();
   }
 
-  /// Demande les permissions et initialise le Bluetooth
-  Future<void> _requestPermissionsAndInit() async {
-    // Vérifier qu'on est sur Android
-    if (!Platform.isAndroid) {
-      setState(() {
-        _errorMessage = 'BLE JNI disponible uniquement sur Android';
-        _statusMessage = 'Non supporté';
-      });
-      return;
-    }
+  Future<void> _initScanner() async {
+    // Demander les permissions (Android uniquement)
+    if (Platform.isAndroid) {
+      setState(() => _statusMessage = 'Demande des permissions...');
 
-    setState(() {
-      _statusMessage = 'Demande des permissions...';
-    });
+      final permissions = await [
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+        Permission.locationWhenInUse,
+      ].request();
 
-    // Demander les permissions nécessaires
-    final permissions = await [
-      Permission.bluetoothScan,
-      Permission.bluetoothConnect,
-      Permission.locationWhenInUse,
-    ].request();
-
-    // Vérifier si toutes les permissions sont accordées
-    final allGranted = permissions.values.every(
-      (status) => status.isGranted || status.isLimited,
-    );
-
-    if (!allGranted) {
-      setState(() {
-        _errorMessage = 'Permissions Bluetooth/Localisation requises';
-        _statusMessage = 'Permissions refusées';
-        _permissionsGranted = false;
-      });
-      return;
-    }
-
-    _permissionsGranted = true;
-    _initBluetooth();
-  }
-
-  void _initBluetooth() {
-    try {
-      // Obtenir l'adaptateur Bluetooth (méthode statique, pas besoin de contexte !)
-      _adapter = BluetoothAdapter.getDefaultAdapter();
-
-      if (_adapter == null) {
-        setState(() {
-          _errorMessage = 'Bluetooth non disponible sur cet appareil';
-          _statusMessage = 'Non disponible';
-        });
-        return;
-      }
-
-      // Vérifier si le Bluetooth est activé
-      if (!_adapter!.isEnabled()) {
-        setState(() {
-          _errorMessage = 'Veuillez activer le Bluetooth';
-          _statusMessage = 'Bluetooth désactivé';
-        });
-        return;
-      }
-
-      // Créer le callback de scan en Dart pur !
-      _scanCallback = BluetoothAdapter$LeScanCallback.implement(
-        $BluetoothAdapter$LeScanCallback(onLeScan: _onDeviceFound),
+      final allGranted = permissions.values.every(
+        (status) => status.isGranted || status.isLimited,
       );
+
+      if (!allGranted) {
+        setState(() {
+          _errorMessage = 'Permissions Bluetooth/Localisation requises';
+          _statusMessage = 'Permissions refusées';
+        });
+        return;
+      }
+    }
+
+    setState(() => _statusMessage = 'Initialisation du Bluetooth...');
+
+    try {
+      // Créer le scanner (détecte automatiquement la plateforme)
+      _scanner = createBleScanner();
+
+      // Initialiser
+      final success = await _scanner!.initialize();
+
+      if (!success) {
+        String debugInfo = '';
+        if (Platform.isIOS && _scanner is BleScannerIOS) {
+          debugInfo = '\nDebug: ${(_scanner as BleScannerIOS).debugMessage}';
+        }
+        setState(() {
+          _errorMessage = '${_getStateMessage(_scanner!.state)}$debugInfo';
+          _statusMessage = 'Initialisation échouée';
+        });
+        return;
+      }
+
+      // Écouter les appareils découverts
+      _scanSubscription = _scanner!.discoveredDevices.listen((device) {
+        if (mounted) {
+          setState(() {
+            _devicesMap[device.identifier] = device;
+          });
+        }
+      });
 
       setState(() {
         _statusMessage = 'Prêt à scanner';
@@ -159,127 +118,73 @@ class _BleScannerPageState extends State<BleScannerPage> {
       });
     } catch (e) {
       setState(() {
-        _errorMessage = 'Erreur d\'initialisation: $e';
-        _statusMessage = 'Erreur';
+        _errorMessage = 'Erreur: $e';
+        _statusMessage = 'Erreur d\'initialisation';
       });
     }
   }
 
-  /// Callback appelé pour chaque appareil BLE découvert
-  void _onDeviceFound(
-    BluetoothDevice? device,
-    int rssi,
-    JByteArray? scanRecord,
-  ) {
-    if (device == null) return;
-
-    try {
-      final address = device.getAddress()?.toDartString() ?? 'Unknown';
-      String name = '';
-      try {
-        name = device.getName()?.toDartString() ?? '';
-      } catch (_) {
-        // getName() peut échouer si pas de permission BLUETOOTH_CONNECT
-      }
-
-      final deviceInfo = BleDeviceInfo(
-        address: address,
-        name: name,
-        rssi: rssi,
-      );
-
-      // Mettre à jour sur le main thread
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _isScanning) {
-          setState(() {
-            _devicesMap[address] = deviceInfo;
-          });
-        }
-      });
-    } catch (e) {
-      debugPrint('Erreur traitement device: $e');
+  String _getStateMessage(BleScannerState state) {
+    switch (state) {
+      case BleScannerState.unavailable:
+        return 'Bluetooth non disponible sur cet appareil';
+      case BleScannerState.disabled:
+        return 'Veuillez activer le Bluetooth';
+      case BleScannerState.unauthorized:
+        return 'Permissions Bluetooth non accordées';
+      case BleScannerState.uninitialized:
+        return 'Scanner non initialisé';
+      case BleScannerState.ready:
+        return 'Prêt';
+      case BleScannerState.scanning:
+        return 'Scan en cours';
     }
   }
 
   Future<void> _startScan() async {
-    // Vérifier les permissions d'abord
-    if (!_permissionsGranted) {
-      await _requestPermissionsAndInit();
-      if (!_permissionsGranted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Permissions requises pour scanner'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-    }
-
-    if (_adapter == null || _scanCallback == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_errorMessage ?? 'Scanner non initialisé'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
+    if (_scanner == null) {
+      await _initScanner();
+      if (_scanner == null) return;
     }
 
     setState(() {
       _isScanning = true;
       _devicesMap.clear();
       _statusMessage = 'Scan en cours...';
+      _errorMessage = null;
     });
 
     try {
-      // Démarrer le vrai scan BLE !
-      final started = _adapter!.startLeScan(_scanCallback);
-
-      if (!started) {
-        setState(() {
-          _isScanning = false;
-          _statusMessage = 'Échec du démarrage du scan';
-          _errorMessage = 'Vérifiez les permissions Bluetooth et Localisation';
-        });
-        return;
-      }
-
-      // Arrêter automatiquement après 15 secondes
-      Future.delayed(const Duration(seconds: 15), () {
-        if (mounted && _isScanning) {
-          _stopScan();
-        }
-      });
+      await _scanner!.startScan(duration: const Duration(seconds: 15));
     } catch (e) {
       setState(() {
-        _isScanning = false;
-        _statusMessage = 'Erreur';
         _errorMessage = 'Erreur de scan: $e';
+      });
+    }
+
+    if (mounted) {
+      setState(() {
+        _isScanning = false;
+        _statusMessage = '${_devicesMap.length} appareil(s) trouvé(s)';
       });
     }
   }
 
-  void _stopScan() {
-    if (_adapter != null && _scanCallback != null && _isScanning) {
-      try {
-        _adapter!.stopLeScan(_scanCallback!);
-      } catch (e) {
-        debugPrint('Erreur arrêt scan: $e');
-      }
-    }
+  Future<void> _stopScan() async {
+    await _scanner?.stopScan();
 
-    setState(() {
-      _isScanning = false;
-      _statusMessage = '${_devicesMap.length} appareil(s) trouvé(s)';
-    });
+    if (mounted) {
+      setState(() {
+        _isScanning = false;
+        _statusMessage = '${_devicesMap.length} appareil(s) trouvé(s)';
+      });
+    }
   }
 
   @override
   void dispose() {
-    _stopScan();
-    _scanCallback?.release();
-    _adapter?.release();
+    _scanSubscription?.cancel();
+    _scanner?.dispose();
     super.dispose();
   }
 
@@ -302,16 +207,11 @@ class _BleScannerPageState extends State<BleScannerPage> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF0D2137),
         elevation: 0,
-        title: const Row(
-          children: [
-            Icon(Icons.bluetooth, color: Color(0xFF00B4D8)),
-            SizedBox(width: 12),
-            Text(
-              'BLE Scanner JNI',
-              style: TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.5),
-            ),
-          ],
+        title: const Text(
+          'BLE Scan',
+          style: TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.5),
         ),
+        leading: const Icon(Icons.bluetooth, color: Color(0xFF00B4D8)),
         actions: [
           Container(
             margin: const EdgeInsets.only(right: 16),
@@ -405,7 +305,7 @@ class _BleScannerPageState extends State<BleScannerPage> {
                       Text(
                         _errorMessage != null
                             ? 'Attention'
-                            : 'Scan BLE 100% JNI',
+                            : 'Scan BLE Cross-Platform',
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
@@ -415,7 +315,9 @@ class _BleScannerPageState extends State<BleScannerPage> {
                       const SizedBox(height: 4),
                       Text(
                         _errorMessage ??
-                            'Appels directs aux APIs Android natives via JNI',
+                            (Platform.isIOS
+                                ? 'APIs CoreBluetooth natives via FFI'
+                                : 'APIs Android natives via JNI'),
                         style: TextStyle(
                           fontSize: 12,
                           color: _errorMessage != null
@@ -489,7 +391,7 @@ class _BleScannerPageState extends State<BleScannerPage> {
     );
   }
 
-  Widget _buildDeviceCard(BleDeviceInfo device) {
+  Widget _buildDeviceCard(BleDevice device) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -511,7 +413,7 @@ class _BleScannerPageState extends State<BleScannerPage> {
           onTap: () {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Sélectionné: ${device.address}'),
+                content: Text('Sélectionné: ${device.identifier}'),
                 backgroundColor: const Color(0xFF00B4D8),
               ),
             );
@@ -570,11 +472,20 @@ class _BleScannerPageState extends State<BleScannerPage> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        device.address,
+                        device.identifier,
                         style: const TextStyle(
-                          fontSize: 13,
+                          fontSize: 12,
                           color: Color(0xFF5C7A99),
                           fontFamily: 'monospace',
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '~${device.estimatedDistance.toStringAsFixed(1)}m',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: const Color(0xFF5C7A99).withOpacity(0.7),
                         ),
                       ),
                     ],
@@ -605,7 +516,7 @@ class _BleScannerPageState extends State<BleScannerPage> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      BleUtils.getSignalQuality(device.rssi),
+                      device.signalQuality,
                       style: TextStyle(
                         fontSize: 11,
                         color: _getRssiColor(device.rssi).withOpacity(0.7),

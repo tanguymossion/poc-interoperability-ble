@@ -1,33 +1,53 @@
-/// Package BLE utilisant JNI pour accéder aux APIs Android natives.
+/// Package BLE cross-platform utilisant FFI/JNI pour accéder aux APIs natives.
 ///
-/// Ce package expose directement les classes Android BLE via jnigen,
-/// permettant un scan BLE 100% Dart sans code natif supplémentaire.
+/// Ce package fournit une API unifiée pour le scan BLE sur Android et iOS.
 ///
-/// ## Exemple de scan BLE fonctionnel
+/// ## API haut niveau (recommandée)
 ///
 /// ```dart
 /// import 'package:my_package_ffi/ble.dart';
 ///
-/// // 1. Obtenir l'adaptateur (pas besoin de contexte !)
-/// final adapter = BluetoothAdapter.getDefaultAdapter();
+/// // Créer le scanner (détection automatique de la plateforme)
+/// final scanner = createBleScanner();
 ///
-/// // 2. Créer le callback en Dart
-/// final callback = BluetoothAdapter$LeScanCallback.implement(
-///   $BluetoothAdapter$LeScanCallback(
-///     onLeScan: (device, rssi, scanRecord) {
-///       print('Trouvé: ${device?.getName()} - $rssi dBm');
-///     },
-///   ),
-/// );
+/// // Initialiser
+/// await scanner.initialize();
 ///
-/// // 3. Démarrer/arrêter le scan
-/// adapter?.startLeScan(callback);
-/// // ... après quelques secondes ...
-/// adapter?.stopLeScan(callback);
+/// // Écouter les appareils découverts
+/// scanner.discoveredDevices.listen((device) {
+///   print('${device.name} (${device.identifier}) - ${device.rssi} dBm');
+/// });
+///
+/// // Scanner pendant 10 secondes
+/// await scanner.startScan(duration: Duration(seconds: 10));
+///
+/// // Ou arrêter manuellement
+/// await scanner.stopScan();
+///
+/// // Libérer les ressources
+/// scanner.dispose();
 /// ```
+///
+/// ## Support des plateformes
+///
+/// - **Android** : ✅ Fonctionnel via JNI (jnigen)
+/// - **iOS** : 🚧 En cours (CoreBluetooth FFI)
 library;
 
-// Classes Android BLE natives (générées par jnigen)
+// ============================================================================
+// API HAUT NIVEAU (cross-platform)
+// ============================================================================
+export 'src/ble_scanner.dart'
+    show BleScanner, BleDevice, BleScannerState, BleScanException, BleUtils;
+export 'src/ble_scanner_factory.dart' show createBleScanner;
+
+// Implémentations spécifiques (pour usage avancé)
+export 'src/android/ble_scanner_android.dart' show BleScannerAndroid;
+export 'src/ios/ble_scanner_ios.dart' show BleScannerIOS;
+
+// ============================================================================
+// API BAS NIVEAU - ANDROID (JNI)
+// ============================================================================
 export 'src/android/jni_bindings.dart'
     show
         // Gestion Bluetooth
@@ -45,11 +65,15 @@ export 'src/android/jni_bindings.dart'
         ScanFilter,
         // ignore: camel_case_types
         ScanFilter$Builder,
-        // Callback pour le scan (ancienne API, mais implémentable en Dart !)
+        // Callback pour le scan
         // ignore: camel_case_types
         BluetoothAdapter$LeScanCallback,
         // ignore: camel_case_types
         $BluetoothAdapter$LeScanCallback;
 
-// Helpers Dart
-export 'src/ble_scanner.dart' show BleUtils, BleScanException, BleScannerState;
+// ============================================================================
+// API BAS NIVEAU - iOS (CoreBluetooth)
+// TEMPORAIREMENT DÉSACTIVÉ - les exports causent le chargement des symboles
+// ============================================================================
+// TODO: Réactiver quand les trampolines seront correctement compilés
+// export 'src/ios/corebluetooth_bindings.dart' show ...;
