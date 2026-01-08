@@ -1,49 +1,125 @@
-# my_package_ffi
+# my_package_ffi - Scanner BLE via JNI
 
-A new Dart FFI package project.
+Un package Flutter pour le scan Bluetooth Low Energy (BLE) sur Android, utilisant **directement les APIs Android natives** via JNI et jnigen.
 
-## Getting Started
+## ✨ Points forts
 
-This project is a starting point for a Flutter
-[FFI package](https://flutter.dev/to/ffi-package),
-a specialized package that includes native code directly invoked with Dart FFI.
+- **100% Dart** - Pas de code Java/Kotlin à écrire
+- **Appels JNI directs** - Performance quasi-native
+- **APIs Android natives** - Utilise directement `BluetoothAdapter`, `BluetoothDevice`, etc.
+- **Callback en Dart** - Implémentation du callback de scan en pur Dart
 
-## Project structure
+## 🚀 Exemple de scan fonctionnel
 
-This template uses the following structure:
+```dart
+import 'package:my_package_ffi/ble.dart';
 
-* `src`: Contains the native source code, and a CmakeFile.txt file for building
-  that source code into a dynamic library.
+// 1. Obtenir l'adaptateur (pas besoin de contexte !)
+final adapter = BluetoothAdapter.getDefaultAdapter();
 
-* `lib`: Contains the Dart code that defines the API of the plugin, and which
-  calls into the native code using `dart:ffi`.
+// 2. Vérifier que le Bluetooth est activé
+if (adapter == null || !adapter.isEnabled()) {
+  print('Bluetooth non disponible ou désactivé');
+  return;
+}
 
-* `bin`: Contains the `build.dart` that performs the external native builds.
+// 3. Créer le callback en Dart pur !
+final callback = BluetoothAdapter$LeScanCallback.implement(
+  $BluetoothAdapter$LeScanCallback(
+    onLeScan: (device, rssi, scanRecord) {
+      final address = device?.getAddress()?.toDartString();
+      final name = device?.getName()?.toDartString() ?? '';
+      print('Trouvé: $name ($address) - $rssi dBm');
+    },
+  ),
+);
 
-## Building and bundling native code
+// 4. Démarrer le scan
+adapter.startLeScan(callback);
 
-`build.dart` does the building of native components.
+// 5. Arrêter après 10 secondes
+await Future.delayed(Duration(seconds: 10));
+adapter.stopLeScan(callback);
 
-Bundling is done by Flutter based on the output from `build.dart`.
+// 6. Libérer les ressources
+callback.release();
+adapter.release();
+```
 
-## Binding to native code
+## 📱 Installation
 
-To use the native code, bindings in Dart are needed.
-To avoid writing these by hand, they are generated from the header file
-(`src/my_package_ffi.h`) by `package:ffigen`.
-Regenerate the bindings by running `dart run ffigen --config ffigen.yaml`.
+### 1. Dépendances
 
-## Invoking native code
+```yaml
+dependencies:
+  my_package_ffi:
+    path: ../  # ou depuis pub.dev
+  jni: ^0.15.2
+```
 
-Very short-running native functions can be directly invoked from any isolate.
-For example, see `sum` in `lib/my_package_ffi.dart`.
+### 2. Permissions Android
 
-Longer-running functions should be invoked on a helper isolate to avoid
-dropping frames in Flutter applications.
-For example, see `sumAsync` in `lib/my_package_ffi.dart`.
+Dans `android/app/src/main/AndroidManifest.xml` :
 
-## Flutter help
+```xml
+<!-- Android 11 et moins -->
+<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
 
-For help getting started with Flutter, view our
-[online documentation](https://docs.flutter.dev), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+<!-- Android 12+ -->
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+<!-- Pour le scan -->
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+<uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+```
+
+### 3. Demander les permissions runtime
+
+Sur Android 12+, demandez les permissions avant de scanner :
+
+```dart
+// Utiliser permission_handler ou similar
+await Permission.bluetoothScan.request();
+await Permission.bluetoothConnect.request();
+await Permission.location.request();
+```
+
+## 📚 Classes disponibles
+
+| Classe | Description |
+|--------|-------------|
+| `BluetoothAdapter` | Adaptateur local, `getDefaultAdapter()`, `startLeScan()` |
+| `BluetoothDevice` | Appareil distant, `getAddress()`, `getName()` |
+| `BluetoothAdapter$LeScanCallback` | Callback implémentable en Dart ! |
+| `BluetoothManager` | Point d'entrée (nécessite contexte) |
+| `BluetoothLeScanner` | Scanner nouvelle API (callback non implémentable) |
+| `ScanResult` | Résultat de scan (nouvelle API) |
+
+## 🔧 Helpers Dart
+
+```dart
+// Estimer la distance depuis le RSSI
+BleUtils.estimateDistance(-65); // → ~3.5 mètres
+
+// Obtenir la qualité du signal
+BleUtils.getSignalQuality(-65); // → "Bon"
+```
+
+## 🛠 Régénérer les bindings
+
+```bash
+dart run jnigen --config jnigen.yaml
+```
+
+## ⚠️ Limitations
+
+- **Android uniquement** - iOS nécessiterait CoreBluetooth via ffigen
+- **API LeScan** - Utilise l'ancienne API (deprecated mais fonctionnelle) car c'est la seule avec callback implémentable en Dart
+- **Permissions** - Nécessite les permissions Bluetooth et Localisation
+
+## 📄 Licence
+
+MIT License

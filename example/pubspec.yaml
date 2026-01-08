@@ -39,6 +39,12 @@ dependencies:
     # the parent directory to use the current plugin's version.
     path: ../
 
+  # JNI pour les types comme JByteArray
+  jni: ^0.15.2
+
+  # Gestion des permissions Android
+  permission_handler: ^11.3.1
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
