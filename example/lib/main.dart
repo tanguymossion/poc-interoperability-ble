@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:my_package_ffi/ble.dart';
-import 'package:my_package_ffi/src/ios/ble_scanner_ios.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 void main() {
