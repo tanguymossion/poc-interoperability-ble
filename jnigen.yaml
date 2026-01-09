@@ -1,6 +1,6 @@
 # Configuration jnigen pour le scan BLE Android
 #
-# Utilise directement les classes Android natives, sans wrapper Java.
+# Utilise directement les classes Android natives.
 #
 # Exécuter avec:
 #   dart run jnigen --config jnigen.yaml
@@ -19,7 +19,7 @@ class_path:
   - /Users/tanguymossion/Library/Android/sdk/platforms/android-34/android.jar
 
 # Classes Android natives pour le BLE
-# Note: Les classes imbriquées ($Builder) sont automatiquement incluses
+# Note: Les classes imbriquées ($Builder, $LeScanCallback) sont automatiquement incluses
 classes:
   # Gestion Bluetooth
   - android.bluetooth.BluetoothManager

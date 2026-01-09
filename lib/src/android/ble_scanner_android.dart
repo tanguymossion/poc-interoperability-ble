@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:jni/jni.dart';
 
 import '../ble_scanner.dart';
@@ -12,7 +13,15 @@ class BleScannerAndroid implements BleScanner {
 
   BluetoothAdapter? _adapter;
   BluetoothAdapter$LeScanCallback? _scanCallback;
+
   Completer<void>? _scanCompleter;
+  Timer? _scanTimer;
+
+  // Flag pour savoir si on accepte les résultats
+  bool _isAcceptingResults = false;
+
+  // Flag pour savoir si le scan natif est actif
+  bool _nativeScanActive = false;
 
   @override
   BleScannerState get state => _state;
@@ -35,7 +44,7 @@ class BleScannerAndroid implements BleScanner {
         return false;
       }
 
-      // Créer le callback de scan
+      // Créer le callback une seule fois
       _scanCallback = BluetoothAdapter$LeScanCallback.implement(
         $BluetoothAdapter$LeScanCallback(onLeScan: _onDeviceFound),
       );
@@ -43,6 +52,7 @@ class BleScannerAndroid implements BleScanner {
       _state = BleScannerState.ready;
       return true;
     } catch (e) {
+      debugPrint('BleScannerAndroid: initialize error: $e');
       _state = BleScannerState.unavailable;
       return false;
     }
@@ -53,16 +63,14 @@ class BleScannerAndroid implements BleScanner {
     int rssi,
     JByteArray? scanRecord,
   ) {
-    if (device == null) return;
+    if (!_isAcceptingResults || device == null) return;
 
     try {
       final address = device.getAddress()?.toDartString() ?? 'Unknown';
       String name = '';
       try {
         name = device.getName()?.toDartString() ?? '';
-      } catch (_) {
-        // getName() peut échouer sans permission BLUETOOTH_CONNECT
-      }
+      } catch (_) {}
 
       List<int>? advertisementData;
       if (scanRecord != null) {
@@ -72,16 +80,16 @@ class BleScannerAndroid implements BleScanner {
         );
       }
 
-      final bleDevice = BleDevice(
-        identifier: address,
-        name: name,
-        rssi: rssi,
-        advertisementData: advertisementData,
+      _devicesController.add(
+        BleDevice(
+          identifier: address,
+          name: name,
+          rssi: rssi,
+          advertisementData: advertisementData,
+        ),
       );
-
-      _devicesController.add(bleDevice);
     } catch (e) {
-      // Ignorer les erreurs de parsing
+      debugPrint('BleScannerAndroid: Error processing device: $e');
     }
   }
 
@@ -97,59 +105,59 @@ class BleScannerAndroid implements BleScanner {
 
   @override
   Future<bool> startScan({Duration? duration}) async {
+    debugPrint('BleScannerAndroid: startScan called, state=$_state');
+
     if (_adapter == null || _scanCallback == null) {
       throw BleScanException('Scanner non initialisé');
     }
 
     if (_state == BleScannerState.scanning) {
-      return true; // Déjà en cours
-    }
-
-    try {
-      final started = _adapter!.startLeScan(_scanCallback);
-      if (!started) {
-        throw BleScanException('Échec du démarrage du scan');
-      }
-
-      _state = BleScannerState.scanning;
-
-      // Si une duration est spécifiée, attendre la fin du scan
-      if (duration != null) {
-        _scanCompleter = Completer<void>();
-
-        // Timer pour arrêter le scan après la durée
-        Future.delayed(duration, () {
-          if (_state == BleScannerState.scanning) {
-            stopScan();
-          }
-        });
-
-        // Attendre que stopScan soit appelé
-        await _scanCompleter!.future;
-      }
-
       return true;
-    } catch (e) {
-      if (e is BleScanException) rethrow;
-      throw BleScanException('Erreur de scan: $e');
     }
+
+    // Démarrer le scan natif si pas déjà actif
+    if (!_nativeScanActive) {
+      debugPrint('BleScannerAndroid: Starting native scan');
+      final started = _adapter!.startLeScan(_scanCallback);
+      if (started) {
+        _nativeScanActive = true;
+        debugPrint('BleScannerAndroid: Scan started successfully');
+      } else {
+        debugPrint('BleScannerAndroid: startLeScan returned false');
+      }
+    }
+
+    // Commencer à accepter les résultats
+    _isAcceptingResults = true;
+    _state = BleScannerState.scanning;
+
+    debugPrint('BleScannerAndroid: Now accepting results');
+
+    if (duration != null) {
+      _scanCompleter = Completer<void>();
+
+      _scanTimer?.cancel();
+      _scanTimer = Timer(duration, () {
+        if (_state == BleScannerState.scanning) {
+          stopScan();
+        }
+      });
+
+      await _scanCompleter!.future;
+    }
+
+    return true;
   }
 
   @override
   Future<void> stopScan() async {
-    if (_state != BleScannerState.scanning) return;
+    debugPrint('BleScannerAndroid: stopScan called');
 
-    try {
-      if (_adapter != null && _scanCallback != null) {
-        _adapter!.stopLeScan(_scanCallback!);
-      }
-    } catch (_) {
-      // Ignorer les erreurs d'arrêt
-    }
-
+    _scanTimer?.cancel();
+    _scanTimer = null;
+    _isAcceptingResults = false;
     _state = BleScannerState.ready;
 
-    // Compléter le Future de startScan si en attente
     if (_scanCompleter != null && !_scanCompleter!.isCompleted) {
       _scanCompleter!.complete();
     }
@@ -158,11 +166,27 @@ class BleScannerAndroid implements BleScanner {
 
   @override
   void dispose() {
-    stopScan();
+    debugPrint('BleScannerAndroid: dispose called');
+
+    _scanTimer?.cancel();
+    _isAcceptingResults = false;
+
+    // Arrêter le scan natif
+    if (_nativeScanActive && _adapter != null && _scanCallback != null) {
+      try {
+        _adapter!.stopLeScan(_scanCallback!);
+      } catch (_) {}
+      _nativeScanActive = false;
+    }
+
     _devicesController.close();
-    _scanCallback?.release();
-    _adapter?.release();
+
+    try {
+      _scanCallback?.release();
+    } catch (_) {}
     _scanCallback = null;
+
+    _adapter?.release();
     _adapter = null;
     _state = BleScannerState.uninitialized;
   }
