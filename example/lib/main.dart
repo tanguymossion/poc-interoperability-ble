@@ -88,19 +88,7 @@ class _BleScannerPageState extends State<BleScannerPage> {
       _scanner = createBleScanner();
 
       // Initialiser
-      final success = await _scanner!.initialize();
-
-      if (!success) {
-        String debugInfo = '';
-        if (Platform.isIOS && _scanner is BleScannerIOS) {
-          debugInfo = '\nDebug: ${(_scanner as BleScannerIOS).debugMessage}';
-        }
-        setState(() {
-          _errorMessage = '${_getStateMessage(_scanner!.state)}$debugInfo';
-          _statusMessage = 'Initialisation échouée';
-        });
-        return;
-      }
+      await _scanner!.initialize();
 
       // Écouter les appareils découverts
       _scanSubscription = _scanner!.discoveredDevices.listen((device) {
@@ -120,23 +108,6 @@ class _BleScannerPageState extends State<BleScannerPage> {
         _errorMessage = 'Erreur: $e';
         _statusMessage = 'Erreur d\'initialisation';
       });
-    }
-  }
-
-  String _getStateMessage(BleScannerState state) {
-    switch (state) {
-      case BleScannerState.unavailable:
-        return 'Bluetooth non disponible sur cet appareil';
-      case BleScannerState.disabled:
-        return 'Veuillez activer le Bluetooth';
-      case BleScannerState.unauthorized:
-        return 'Permissions Bluetooth non accordées';
-      case BleScannerState.uninitialized:
-        return 'Scanner non initialisé';
-      case BleScannerState.ready:
-        return 'Prêt';
-      case BleScannerState.scanning:
-        return 'Scan en cours';
     }
   }
 
@@ -206,10 +177,6 @@ class _BleScannerPageState extends State<BleScannerPage> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF0D2137),
         elevation: 0,
-        title: const Text(
-          'BLE Scan',
-          style: TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.5),
-        ),
         leading: const Icon(Icons.bluetooth, color: Color(0xFF00B4D8)),
         actions: [
           Container(
