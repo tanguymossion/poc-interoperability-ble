@@ -1,21 +1,14 @@
-import 'package:native_toolchain_c/native_toolchain_c.dart';
-import 'package:logging/logging.dart';
 import 'package:hooks/hooks.dart';
 
+/// Build hook pour le package my_package_ffi.
+///
+/// Ce package utilise :
+/// - JNI (jnigen) pour Android - pas de compilation native nécessaire
+/// - FFI (ffigen) pour iOS - compilation via CocoaPods
+///
+/// Ce hook est requis par la configuration ffiPlugin mais ne fait rien.
 void main(List<String> args) async {
   await build(args, (input, output) async {
-    final packageName = input.packageName;
-    final cbuilder = CBuilder.library(
-      name: packageName,
-      assetName: '${packageName}_bindings_generated.dart',
-      sources: ['src/$packageName.c'],
-    );
-    await cbuilder.run(
-      input: input,
-      output: output,
-      logger: Logger('')
-        ..level = .ALL
-        ..onRecord.listen((record) => print(record.message)),
-    );
+    // Rien à compiler - JNI et FFI sont gérés autrement
   });
 }

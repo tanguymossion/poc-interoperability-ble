@@ -7,20 +7,17 @@ environment:
   flutter: ">=3.3.0"
 
 dependencies:
-  code_assets: ^0.19.7
-  ffi: ^2.1.3
   flutter:
     sdk: flutter
-  hooks: ^0.20.1
-  jni: ^0.15.2
-  logging: ^1.3.0
-  native_toolchain_c: ^0.17.1
+  ffi: ^2.1.3
   objective_c: ^9.0.0
+  jni: ^0.15.2
+  hooks: ^0.20.1
 
 dev_dependencies:
   ffigen: ^20.0.0
-  flutter_lints: ^6.0.0
   jnigen: ^0.15.0
+  flutter_lints: ^6.0.0
   test: ^1.25.8
 
 flutter:
@@ -29,6 +26,5 @@ flutter:
       android:
         ffiPlugin: true
       ios:
-        # Les sources sont compilées via CocoaPods (voir ios/my_package_ffi.podspec)
-        # On n'utilise pas ffiPlugin car le hook native_toolchain_c ne supporte pas bien ObjC
+        # Les sources Objective-C sont compilées via CocoaPods
         pluginClass: MyPackageFfiPlugin

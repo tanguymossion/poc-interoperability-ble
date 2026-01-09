@@ -1,12 +1,14 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:objective_c/objective_c.dart' as objc;
 
 import '../ble_scanner.dart';
 import 'corebluetooth_bindings.dart';
 
 /// Implémentation iOS du scanner BLE utilisant CoreBluetooth via FFI.
+///
+/// Utilise les bindings générés par ffigen pour accéder directement
+/// aux APIs CoreBluetooth natives d'iOS.
 class BleScannerIOS implements BleScanner {
   BleScannerState _state = BleScannerState.uninitialized;
   final _devicesController = StreamController<BleDevice>.broadcast();
@@ -22,27 +24,16 @@ class BleScannerIOS implements BleScanner {
   @override
   Stream<BleDevice> get discoveredDevices => _devicesController.stream;
 
-  /// Message de debug pour diagnostiquer les problèmes
-  String? debugMessage;
-
   @override
   Future<bool> initialize() async {
     try {
-      debugMessage = 'Création du delegate...';
-      debugPrint('BleScannerIOS: Création du delegate...');
-
       // Créer le delegate avec les callbacks
-      // IMPORTANT: Utiliser implementAsListener pour éviter les deadlocks
+      // Utiliser implementAsListener pour éviter les deadlocks
       // car les callbacks sont appelés depuis le thread principal iOS
       _delegate = CBCentralManagerDelegate$Builder.implementAsListener(
         centralManagerDidUpdateState_: _onStateUpdated,
         centralManager_didDiscoverPeripheral_advertisementData_RSSI_:
             _onDeviceDiscovered,
-      );
-
-      debugMessage = 'Delegate créé, création du CBCentralManager...';
-      debugPrint(
-        'BleScannerIOS: Delegate créé, création du CBCentralManager...',
       );
 
       // Créer le CBCentralManager avec le delegate
@@ -51,32 +42,23 @@ class BleScannerIOS implements BleScanner {
         queue: null, // Utilise la main queue
       );
 
-      debugMessage = 'CBCentralManager créé, polling de l\'état...';
-      debugPrint('BleScannerIOS: CBCentralManager créé, polling de l\'état...');
-
-      // Attendre que CoreBluetooth initialise le manager
-      // et polling pour vérifier l'état
+      // Attendre que CoreBluetooth initialise le manager (polling)
       for (int i = 0; i < 30; i++) {
         await Future.delayed(const Duration(milliseconds: 100));
         _updateStateFromManager();
-        debugPrint('BleScannerIOS: Polling #$i, state=$_state');
         if (_state != BleScannerState.uninitialized) {
           break;
         }
       }
 
-      debugMessage = 'Initialisation terminée, state=$_state';
-      debugPrint('BleScannerIOS: Initialisation terminée. State: $_state');
       return _state == BleScannerState.ready;
-    } catch (e, stackTrace) {
-      debugMessage = 'Erreur d\'initialisation: $e';
-      debugPrint('BleScannerIOS initialization error: $e');
-      debugPrint('Stack trace: $stackTrace');
+    } catch (e) {
       _state = BleScannerState.unavailable;
       return false;
     }
   }
 
+  /// Met à jour l'état du scanner en fonction de l'état du CBCentralManager.
   void _updateStateFromManager() {
     if (_centralManager == null) {
       _state = BleScannerState.unavailable;
@@ -85,14 +67,9 @@ class BleScannerIOS implements BleScanner {
 
     try {
       final managerState = _centralManager!.state;
-      debugPrint(
-        'BleScannerIOS: CBManagerState raw value: ${managerState.value}',
-      );
 
       switch (managerState.value) {
         case 0: // CBManagerStateUnknown
-          _state = BleScannerState.uninitialized;
-          break;
         case 1: // CBManagerStateResetting
           _state = BleScannerState.uninitialized;
           break;
@@ -111,17 +88,17 @@ class BleScannerIOS implements BleScanner {
         default:
           _state = BleScannerState.unavailable;
       }
-    } catch (e) {
-      debugPrint('BleScannerIOS: Error reading state: $e');
+    } catch (_) {
       _state = BleScannerState.unavailable;
     }
   }
 
+  /// Callback appelé quand l'état du Bluetooth change.
   void _onStateUpdated(CBCentralManager manager) {
-    debugPrint('BleScannerIOS: Callback centralManagerDidUpdateState appelé');
     _updateStateFromManager();
   }
 
+  /// Callback appelé pour chaque périphérique découvert.
   void _onDeviceDiscovered(
     CBCentralManager central,
     CBPeripheral peripheral,
@@ -129,21 +106,17 @@ class BleScannerIOS implements BleScanner {
     objc.NSNumber rssi,
   ) {
     try {
-      // Obtenir l'UUID via CBUUID - utiliser toDartString() pour convertir NSString
+      // Obtenir l'UUID via CBUUID
       final nsuuid = peripheral.identifier;
       final cbuuid = CBUUID.UUIDWithNSUUID(nsuuid);
       final identifier = cbuuid.UUIDString.toDartString();
 
-      // Le nom via NSString - utiliser toDartString()
+      // Le nom du périphérique
       final nameNSString = peripheral.name;
       final name = nameNSString?.toDartString() ?? 'Unknown';
 
       // RSSI
       final rssiValue = rssi.intValue;
-
-      debugPrint(
-        'BleScannerIOS: Découvert: $name ($identifier) RSSI: $rssiValue',
-      );
 
       final device = BleDevice(
         identifier: identifier,
@@ -153,9 +126,8 @@ class BleScannerIOS implements BleScanner {
       );
 
       _devicesController.add(device);
-    } catch (e, stack) {
-      debugPrint('BleScannerIOS: Erreur découverte: $e');
-      debugPrint('BleScannerIOS: Stack: $stack');
+    } catch (_) {
+      // Ignorer les erreurs de parsing
     }
   }
 
@@ -168,7 +140,7 @@ class BleScannerIOS implements BleScanner {
   @override
   Future<bool> isBluetoothEnabled() async {
     return _centralManager != null &&
-        _centralManager!.state.value == 5; // CBManagerStatePoweredOn
+        _centralManager!.state.value == 5; // == CBManagerStatePoweredOn
   }
 
   @override
@@ -182,8 +154,6 @@ class BleScannerIOS implements BleScanner {
     }
 
     try {
-      debugPrint('BleScannerIOS: Démarrage du scan...');
-
       // Scanner tous les périphériques (nil = pas de filtre par service)
       _centralManager!.scanForPeripheralsWithServices(null, options: null);
       _state = BleScannerState.scanning;
@@ -200,7 +170,6 @@ class BleScannerIOS implements BleScanner {
 
       return true;
     } catch (e) {
-      debugPrint('BleScannerIOS: Erreur de scan: $e');
       if (e is BleScanException) rethrow;
       throw BleScanException('Erreur de scan: $e');
     }
@@ -212,7 +181,6 @@ class BleScannerIOS implements BleScanner {
     _scanTimer = null;
 
     if (_centralManager != null && _state == BleScannerState.scanning) {
-      debugPrint('BleScannerIOS: Arrêt du scan...');
       _centralManager!.stopScan();
       _state = BleScannerState.ready;
     }
@@ -225,7 +193,6 @@ class BleScannerIOS implements BleScanner {
 
   @override
   void dispose() {
-    debugPrint('BleScannerIOS: Dispose...');
     _scanTimer?.cancel();
     stopScan();
     _devicesController.close();
