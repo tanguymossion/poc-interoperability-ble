@@ -23,11 +23,3 @@ dev_dependencies:
   jnigen: ^0.15.0
   flutter_lints: ^6.0.0
   test: ^1.25.8
-
-flutter:
-  plugin:
-    platforms:
-      android:
-        ffiPlugin: true
-      ios:
-        ffiPlugin: true
